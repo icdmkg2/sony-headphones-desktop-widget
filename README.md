@@ -8,7 +8,7 @@ The widget is developed and tested around the Sony WH-1000XM5. It can also disco
 
 The latest stable release is **v2.9.4**.
 
-[Download the Rainmeter installer](https://github.com/icdmkg2/sony-headphones-desktop-widget/releases/latest/download/Sony%20Headphones%20Desktop%20Widget_2.9.4.rmskin) or browse the [release notes](https://github.com/icdmkg2/sony-headphones-desktop-widget/releases/latest).
+[Download the Rainmeter installer](https://github.com/icdmkg2/sony-headphones-desktop-widget/releases/latest/download/Sony.Headphones.Desktop.Widget_2.9.4.rmskin) or browse the [release notes](https://github.com/icdmkg2/sony-headphones-desktop-widget/releases/latest).
 
 ## Features
 
