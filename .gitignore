@@ -1,0 +1,10 @@
+.build/
+dist/
+*.rmskin
+Skin/SonyXM5/@Resources/Bridge/*.exe
+Skin/SonyXM5/@Resources/Data/Runtime/
+Skin/SonyXM5/@Resources/Data/state.ini
+Skin/SonyXM5/@Resources/Data/state.ini.tmp
+Skin/SonyXM5/@Resources/Data/bridge.log
+Skin/SonyXM5/@Resources/Data/Queue/*.cmd
+!Skin/SonyXM5/@Resources/Data/Queue/.gitkeep
