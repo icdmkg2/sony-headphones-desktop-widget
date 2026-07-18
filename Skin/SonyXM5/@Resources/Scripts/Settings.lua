@@ -44,6 +44,8 @@ local accentColors = {
     rose = '255,117,154,255'
 }
 local accentOverride = nil
+local settingsUiCache = {}
+local settingsVariableCache = {}
 
 local function number(value, fallback)
     local result = tonumber(value)
@@ -59,7 +61,10 @@ local function writeValue(name, value)
 end
 
 local function setVariable(name, value)
-    SKIN:Bang('!SetVariable', name, tostring(value))
+    local text = tostring(value)
+    if settingsVariableCache[name] == text then return end
+    settingsVariableCache[name] = text
+    SKIN:Bang('!SetVariable', name, text)
 end
 
 local function colorWithAlpha(color, alpha)
@@ -116,6 +121,24 @@ end
 
 function Update()
     local accent = currentAccent()
+    local design = tostring(SKIN:GetVariable('WidgetDesign', 'line')):lower()
+    if design ~= 'line' and design ~= 'studio' and design ~= 'mono' then design = 'line' end
+    local textColor = tostring(SKIN:GetVariable('UserTextColor', defaults.UserTextColor))
+    local uiSignature = table.concat({
+        accent, design, textColor,
+        tostring(number(SKIN:GetVariable('ShowStatusText'), 1)),
+        tostring(number(SKIN:GetVariable('ShowBatteryIcon'), 0)),
+        tostring(number(SKIN:GetVariable('ShowButtonIcons'), 1)),
+        tostring(number(SKIN:GetVariable('EnableAnimations'), 1)),
+        tostring(number(SKIN:GetVariable('BatteryAlerts'), 1)),
+        tostring(number(SKIN:GetVariable('ShowConnectionHealth'), 1)),
+        tostring(number(SKIN:GetVariable('ShowAmbientRow'), 1)),
+        tostring(number(SKIN:GetVariable('ShowTrackArtist'), 1)),
+        tostring(number(SKIN:GetVariable('ShowQuickControls'), 1))
+    }, '|')
+    if settingsUiCache.signature == uiSignature then return 0 end
+    settingsUiCache.signature = uiSignature
+
     setVariable('Accent', accent)
     setVariable('AccentSoft', colorWithAlpha(accent, 28))
 
@@ -136,16 +159,14 @@ function Update()
         setButtonState(prefix .. 'Toggle', active)
     end
 
-    local design = tostring(SKIN:GetVariable('WidgetDesign', 'line')):lower()
-    if design ~= 'line' and design ~= 'studio' and design ~= 'mono' then design = 'line' end
     setOutlineState('DesignLine', design == 'line')
     setOutlineState('DesignStudio', design == 'studio')
     setOutlineState('DesignMono', design == 'mono')
 
-    local textColor = tostring(SKIN:GetVariable('UserTextColor', defaults.UserTextColor))
     setButtonState('ThemeWhite', textColor == '245,245,245,255')
     setButtonState('ThemeWarm', textColor == '255,244,226,255')
     setButtonState('ThemeBlue', textColor == '225,238,255,255')
+    setButtonState('ThemeDark', textColor == '28,28,32,255')
     setAccentState('AccentMint', accentColors.mint, accent == accentColors.mint)
     setAccentState('AccentCyan', accentColors.cyan, accent == accentColors.cyan)
     setAccentState('AccentViolet', accentColors.violet, accent == accentColors.violet)
@@ -168,28 +189,34 @@ end
 function Adjust(name, delta, minimum, maximum)
     local current = number(SKIN:GetVariable(name), defaults[name] or 0)
     local value = math.max(number(minimum, current), math.min(number(maximum, current), current + number(delta, 0)))
+    settingsUiCache.signature = nil
     writeValue(name, math.floor(value + 0.5))
     redrawWidget()
 end
 
 function Toggle(name)
     local value = number(SKIN:GetVariable(name), defaults[name] or 0) == 0 and 1 or 0
+    settingsUiCache.signature = nil
     writeValue(name, value)
     redrawWidget()
 end
 
 function Theme(name)
     local themes = {
-        white = {'245,245,245,255', '155,155,155,255', '92,92,92,180', '92,92,92,115', '34,34,38,225'},
-        warm = {'255,244,226,255', '187,169,146,255', '115,101,84,180', '115,101,84,105', '43,38,32,225'},
-        blue = {'225,238,255,255', '151,174,203,255', '79,103,132,180', '79,103,132,105', '29,36,47,225'}
+        white = {'245,245,245,255', '155,155,155,255', '92,92,92,180', '92,92,92,115', '34,34,38,225', '72,72,72,210'},
+        warm = {'255,244,226,255', '187,169,146,255', '115,101,84,180', '115,101,84,105', '43,38,32,225', '96,84,72,210'},
+        blue = {'225,238,255,255', '151,174,203,255', '79,103,132,180', '79,103,132,105', '29,36,47,225', '72,86,104,210'},
+        -- Dark ink for light / white wallpapers
+        dark = {'28,28,32,255', '102,102,110,255', '70,70,76,170', '70,70,76,100', '238,238,242,235', '168,168,174,210'}
     }
     local colors = themes[name] or themes.white
+    settingsUiCache.signature = nil
     writeValue('UserTextColor', colors[1])
     writeValue('UserMutedColor', colors[2])
     writeValue('UserLineColor', colors[3])
     writeValue('UserDividerColor', colors[4])
     writeValue('UserControlFillColor', colors[5])
+    writeValue('UserDisabledColor', colors[6])
     redrawWidget()
 end
 
@@ -197,6 +224,7 @@ function Accent(name)
     name = tostring(name):lower()
     local color = accentColors[name] or accentColors.mint
     accentOverride = color
+    settingsUiCache.signature = nil
     writeValue('UserSuccessColor', color)
     setVariable('Accent', color)
     setVariable('AccentSoft', colorWithAlpha(color, 28))
@@ -209,11 +237,13 @@ end
 function Design(name)
     name = tostring(name):lower()
     if name ~= 'line' and name ~= 'studio' and name ~= 'mono' then name = 'line' end
+    settingsUiCache.signature = nil
     writeValue('WidgetDesign', name)
     redrawWidget()
 end
 
 function Reset()
+    settingsUiCache.signature = nil
     for name, value in pairs(defaults) do writeValue(name, value) end
     redrawWidget()
 end

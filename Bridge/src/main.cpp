@@ -35,7 +35,7 @@ using namespace std::chrono_literals;
 
 namespace
 {
-constexpr char kBridgeVersion[] = "0.3.33";
+constexpr char kBridgeVersion[] = "0.3.34";
 
 enum class Transport
 {
@@ -945,10 +945,22 @@ private:
 
         const std::string payload = stream.str();
         const auto now = Clock::now();
-        // Re-publish a small heartbeat even when nothing changed. An installer
-        // can replace state.ini while an older bridge is still shutting down;
-        // without this heartbeat the replacement could remain stuck forever.
-        if (payload == lastStatePayload_ && now - lastStatePublish_ < 2s)
+        // Compare a stable view of state so uptime/latency heartbeats do not
+        // force a disk write every second. Still republish at least every 2s
+        // so installers cannot leave a stale state.ini behind during upgrades.
+        std::string stablePayload = payload;
+        auto blankField = [&stablePayload](const char* key) {
+            const std::string prefix = std::string(key) + '=';
+            const auto begin = stablePayload.find(prefix);
+            if (begin == std::string::npos) return;
+            const auto end = stablePayload.find('\n', begin);
+            if (end == std::string::npos) return;
+            stablePayload.replace(begin, end - begin, prefix);
+        };
+        blankField("connection_uptime_seconds");
+        blankField("command_latency_ms");
+        blankField("connect_latency_ms");
+        if (stablePayload == lastStatePayload_ && now - lastStatePublish_ < 2s)
             return;
 
         const fs::path temporary = dataDirectory_ / "state.ini.tmp";
@@ -987,7 +999,7 @@ private:
 
         if (published)
         {
-            lastStatePayload_ = payload;
+            lastStatePayload_ = std::move(stablePayload);
             lastStatePublish_ = now;
         }
         else

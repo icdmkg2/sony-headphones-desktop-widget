@@ -13,7 +13,7 @@ $UpstreamRoot = Join-Path $BuildRoot 'SonyHeadphonesClient'
 $UpstreamCommit = 'eff6a9101193f41a33c38f4aee6037fd698b80c3'
 $UpstreamUrl = 'https://github.com/mos9527/SonyHeadphonesClient.git'
 $BuildDirectory = Join-Path $BuildRoot "bridge-msvc-$($Configuration.ToLowerInvariant())"
-$BridgeDestination = Join-Path $RepoRoot 'Skin\SonyXM5\@Resources\Bridge\SonyXM5Bridge-0.3.33.bin'
+$BridgeDestination = Join-Path $RepoRoot 'Skin\SonyXM5\@Resources\Bridge\SonyXM5Bridge-0.3.34.bin'
 
 function Assert-Command([string]$Name, [string]$Help) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {

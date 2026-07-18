@@ -37,6 +37,11 @@ local startupRecoveryTimer = 0
 local startupRecoveryCommand
 local lastLayoutSignature = ''
 local variableCache = {}
+local lastStateRaw = ''
+local lastApplySignature = ''
+local lastHealthSignature = ''
+local healthTick = 0
+local animSettled = false
 
 local COLOR = {
     primary = '245,245,245,255',
@@ -69,9 +74,13 @@ end
 local function readIni(path)
     local values = {}
     local file = io.open(path, 'r')
-    if not file then return values end
+    if not file then return values, false end
+    local content = file:read('*a') or ''
+    file:close()
+    if content == lastStateRaw then return values, false end
+    lastStateRaw = content
     local inState = false
-    for line in file:lines() do
+    for line in content:gmatch('[^\n]+') do
         line = line:gsub('\r$', '')
         if line:match('^%s*%[') then
             inState = line:lower():match('^%s*%[state%]') ~= nil
@@ -80,8 +89,7 @@ local function readIni(path)
             if key then values[key:lower():gsub('%s+$', '')] = value end
         end
     end
-    file:close()
-    return values
+    return values, true
 end
 
 local function setVariable(name, value)
@@ -417,9 +425,12 @@ end
 
 local function toggleColors(key, supportedKey)
     local supported = supportedKey == nil or state[supportedKey] == '1'
-    if not supported then return COLOR.surfaceHigh, COLOR.outlineVariant end
+    local controlFill = skinColor('UserControlFillColor', COLOR.surfaceHigh)
+    local muted = skinColor('UserMutedColor', COLOR.onVariant)
+    local disabled = skinColor('UserDisabledColor', COLOR.outlineVariant)
+    if not supported then return controlFill, disabled end
     if isOn(key) then return skinColor('UserSuccessColor', '91,225,145,255'), '17,31,23,255' end
-    return COLOR.surfaceHigh, COLOR.onVariant
+    return controlFill, muted
 end
 
 local function applyToggle(variablePrefix, key, supportedKey)
@@ -482,9 +493,12 @@ local function applyState()
     setVariable('AmbientLevel', number(state.ambient_level, 20))
 
     local anc = state.anc_mode or 'off'
+    local controlFill = skinColor('UserControlFillColor', COLOR.surfaceHighest)
+    local muted = skinColor('UserMutedColor', COLOR.onVariant)
+    local disabled = skinColor('UserDisabledColor', COLOR.outlineVariant)
     local function modeColors(active)
         if active then return mono.active, '17,31,23,255' end
-        return COLOR.surfaceHighest, COLOR.onVariant
+        return controlFill, muted
     end
     local fill, text = modeColors(anc == 'noise_cancelling')
     setVariable('AncNoiseFill', fill) setVariable('AncNoiseText', text)
@@ -500,7 +514,7 @@ local function applyState()
     if miniAncSupported then
         fill, text = modeColors(true)
     else
-        fill, text = COLOR.surfaceHigh, COLOR.outlineVariant
+        fill, text = controlFill, disabled
     end
     setVariable('MiniAncLabel', miniAncLabel)
     setVariable('MiniAncFill', fill)
@@ -623,27 +637,43 @@ end
 
 local function updateAnimations()
     local enabled = settingFlag('EnableAnimations', true) == 1
-    animationPhase = (animationPhase + 0.34) % (math.pi * 2)
-    local wave = (math.sin(animationPhase) + 1) * 0.5
+    local status = state.status or 'starting'
+    local isTransitioning = status == 'starting' or status == 'searching' or status == 'connecting'
+        or status == 'syncing' or status == 'recovering' or status == 'updating'
+    local battery = math.max(0, math.min(100, number(state.battery, 0)))
+    local threshold = settingNumber('BatteryAlertLevel', 20, 5, 50)
+    local low = (status == 'connected' or status == 'recovering') and not isOn('charging') and battery <= threshold
+    local heightBusy = math.abs(targetWidgetHeight - currentWidgetHeight) >= 0.7
+    local volumeBusy = animatedVolume ~= nil and math.abs(number(state.volume, 0) - animatedVolume) >= 0.04
+    local needsPulse = enabled and (commandPulseTicks > 0 or isTransitioning or status == 'disconnected' or low)
 
     if not enabled then
         currentWidgetHeight = targetWidgetHeight
-    else
-        local difference = targetWidgetHeight - currentWidgetHeight
-        if math.abs(difference) < 0.7 then
+        heightBusy = false
+    elseif heightBusy then
+        currentWidgetHeight = currentWidgetHeight + (targetWidgetHeight - currentWidgetHeight) * 0.30
+        if math.abs(targetWidgetHeight - currentWidgetHeight) < 0.7 then
             currentWidgetHeight = targetWidgetHeight
-        else
-            currentWidgetHeight = currentWidgetHeight + difference * 0.30
+            heightBusy = false
         end
     end
     setVariable('WidgetHeight', math.floor(currentWidgetHeight + 0.5))
 
-    local status = state.status or 'starting'
+    if not needsPulse and not heightBusy and not volumeBusy then
+        if not animSettled then
+            setVariable('StatusPulseColor', colorWithAlpha(skinColor('UserMutedColor', MONO.inactive), 0))
+            setVariable('StatusPulseRadius', '3.50')
+            animSettled = true
+        end
+        return false
+    end
+
+    animSettled = false
+    animationPhase = (animationPhase + 0.34) % (math.pi * 2)
+    local wave = (math.sin(animationPhase) + 1) * 0.5
     local pulseColor = skinColor('UserMutedColor', MONO.inactive)
     local pulseAlpha = 0
     local pulseRadius = 3.5
-    local isTransitioning = status == 'starting' or status == 'searching' or status == 'connecting'
-        or status == 'syncing' or status == 'recovering' or status == 'updating'
     if enabled and commandPulseTicks > 0 then
         pulseColor = skinColor('UserTextColor', MONO.active)
         pulseAlpha = 45 + 125 * (commandPulseTicks / 12)
@@ -660,12 +690,74 @@ local function updateAnimations()
     setVariable('StatusPulseRadius', string.format('%.2f', pulseRadius))
     if commandPulseTicks > 0 then commandPulseTicks = commandPulseTicks - 1 end
 
-    local battery = math.max(0, math.min(100, number(state.battery, 0)))
-    local threshold = settingNumber('BatteryAlertLevel', 20, 5, 50)
-    local low = (state.status == 'connected' or state.status == 'recovering') and not isOn('charging') and battery <= threshold
     if enabled and low then
         setVariable('BatteryColor', colorWithAlpha(skinColor('UserErrorColor', COLOR.error), 205 + 50 * wave))
     end
+    return true
+end
+
+local function stateApplySignature()
+    return table.concat({
+        state.status or '', state.status_text or '', state.error or '',
+        state.device_name or '', state.battery or '', state.charging or '',
+        state.volume or '', state.playback or '', state.track_title or '', state.track_artist or '',
+        state.anc_mode or '', state.ambient_level or '', state.focus_voice or '',
+        state.speak_to_chat or '', state.dsee or '', state.auto_pause or '',
+        state.touch_panel or '', state.multipoint or '', state.eq_preset or '',
+        state.eq_bass or '', state.eq_band_1 or '', state.eq_band_2 or '',
+        state.eq_band_3 or '', state.eq_band_4 or '', state.eq_band_5 or '',
+        state.priority or '', state.auto_off or '', state.codec or '', state.firmware or '',
+        state.supported_anc or '', state.supported_ambient or '', state.supported_eq or '',
+        state.supported_speak_to_chat or '', state.supported_auto_pause or '',
+        state.supported_touch_panel or '', state.supported_multipoint or '',
+        state.supported_power_off or '', tostring(powerArmTicks > 0 and 1 or 0)
+    }, '\0')
+end
+
+local function applyHealthOnly()
+    local status = state.status or 'setup'
+    local monoActive = skinColor('UserSuccessColor', '91,225,145,255')
+    local monoInactive = skinColor('UserMutedColor', MONO.inactive)
+    local monoDisabled = skinColor('UserDisabledColor', MONO.disabled)
+    local monoError = skinColor('UserErrorColor', COLOR.error)
+    local healthLabel = 'STARTING'
+    if status == 'connected' then healthLabel = 'HEALTHY' end
+    if status == 'connecting' or status == 'searching' or status == 'syncing' or status == 'updating' then healthLabel = 'CONNECTING' end
+    if status == 'recovering' then healthLabel = 'RECOVERING' end
+    if status == 'disconnected' then healthLabel = 'OFFLINE' end
+    if status == 'setup' or status == 'stopped' then healthLabel = 'INACTIVE' end
+    local healthColor = monoInactive
+    if status == 'connected' then healthColor = monoActive end
+    if status == 'disconnected' then healthColor = monoError end
+    if status == 'setup' or status == 'stopped' then healthColor = monoDisabled end
+    local transport = tostring(state.transport or '--'):upper()
+    local codec = codecName(state.codec)
+    local commandLatency = number(state.command_latency_ms, -1)
+    local commandLatencyText = commandLatency >= 0 and (tostring(math.floor(commandLatency + 0.5)) .. ' MS') or '-- MS'
+    local uptimeText = formatDuration(state.connection_uptime_seconds)
+    local connectLatency = number(state.connect_latency_ms, -1)
+    local connectLatencyText = connectLatency >= 0 and (tostring(math.floor(connectLatency + 0.5)) .. ' ms') or '--'
+    local lastDisconnect = state.last_disconnect
+    if not lastDisconnect or lastDisconnect == '' then lastDisconnect = 'None recorded' end
+    local healthSignature = table.concat({
+        healthLabel, healthColor, transport, codec, commandLatencyText, uptimeText,
+        connectLatencyText, tostring(state.connection_attempts or ''), tostring(state.reconnect_count or ''),
+        tostring(state.poll_error_count or ''), lastDisconnect
+    }, '|')
+    if healthSignature == lastHealthSignature then return end
+    lastHealthSignature = healthSignature
+    setVariable('HealthLabel', healthLabel)
+    setVariable('HealthColor', healthColor)
+    setVariable('HealthTransport', transport)
+    setVariable('HealthCodec', codec)
+    setVariable('HealthLatency', commandLatencyText)
+    setVariable('HealthUptime', uptimeText)
+    setVariable('HealthSummary', transport .. ' / ' .. codec .. ' / CMD ' .. commandLatencyText .. ' / ' .. uptimeText)
+    setVariable('HealthDetail', 'Connect: ' .. connectLatencyText
+        .. ' | Attempts: ' .. tostring(math.floor(number(state.connection_attempts, 0)))
+        .. ' | Reconnects: ' .. tostring(math.floor(number(state.reconnect_count, 0)))
+        .. ' | Poll errors: ' .. tostring(math.floor(number(state.poll_error_count, 0)))
+        .. ' | Last disconnect: ' .. lastDisconnect)
 end
 
 local function preserveStateDuringRecovery()
@@ -721,6 +813,9 @@ local function setOptimisticState(key, value)
 end
 
 local function renderImmediate()
+    lastApplySignature = ''
+    lastHealthSignature = ''
+    animSettled = false
     applyState()
     SKIN:Bang('!UpdateMeter', '*')
     SKIN:Bang('!Redraw')
@@ -878,14 +973,16 @@ end
 
 function Update()
     if bridgeLaunchCooldown > 0 then bridgeLaunchCooldown = bridgeLaunchCooldown - 1 end
-    local snapshot = readIni(dataPath .. '\\state.ini')
+    local snapshot, stateFileChanged = readIni(dataPath .. '\\state.ini')
     -- Keep the last complete snapshot if Rainmeter happens to read while the
     -- bridge is publishing a replacement file. This prevents visible resets.
-    if snapshot.bridge_version and snapshot.status then state = snapshot end
+    if stateFileChanged and snapshot.bridge_version and snapshot.status then state = snapshot end
+    local forcedStatus = false
     if not fileExists(bridgePath) then
         state.status = 'setup'
         state.status_text = 'Bridge needs to be built'
         state.error = 'Run Scripts\\Build-Bridge.ps1, then refresh the skin.'
+        forcedStatus = true
     elseif expectedBridgeVersion ~= '' and state.bridge_version
         and state.bridge_version ~= '' and state.bridge_version ~= expectedBridgeVersion then
         if not bridgeUpgradeActive then
@@ -906,21 +1003,22 @@ function Update()
         state.status = 'updating'
         state.status_text = 'Updating headphone controls'
         state.error = 'Replacing the previous bridge helper.'
+        forcedStatus = true
     else
         bridgeUpgradeActive = false
         bridgeUpgradeCommand = nil
         if state.status == 'starting' then
             startupStallTicks = startupStallTicks + 1
-            if startupStallTicks == 100 then
+            if startupStallTicks == 50 then
                 startupRecoveryCommand = Command('shutdown')
-                startupRecoveryTimer = 10
-            elseif startupStallTicks > 100 then
+                startupRecoveryTimer = 5
+            elseif startupStallTicks > 50 then
                 startupRecoveryTimer = startupRecoveryTimer - 1
                 if startupRecoveryTimer <= 0 then
                     if startupRecoveryCommand then os.remove(startupRecoveryCommand) end
                     startupRecoveryCommand = nil
                     launchBridge(true)
-                    startupRecoveryTimer = 50
+                    startupRecoveryTimer = 25
                 end
             end
         else
@@ -938,8 +1036,39 @@ function Update()
     if powerArmTicks > 0 then powerArmTicks = powerArmTicks - 1 end
     updateView(false)
     updateVisibility(false)
-    applyState()
-    updateAnimations()
+
+    local applySignature = stateApplySignature()
+    local stateDirty = forcedStatus or applySignature ~= lastApplySignature
+        or optimisticVolume ~= nil or next(optimisticState) ~= nil
+    if stateDirty then
+        lastApplySignature = applySignature
+        lastHealthSignature = ''
+        applyState()
+    else
+        healthTick = healthTick + 1
+        if healthTick >= 5 or stateFileChanged then
+            healthTick = 0
+            applyHealthOnly()
+        end
+    end
+
+    local animating = updateAnimations()
+    if animating and not stateDirty then
+        -- Volume fill / height can change without a bridge state change.
+        local volume = math.max(0, math.min(30, number(state.volume, 0)))
+        if animatedVolume == nil or settingFlag('EnableAnimations', true) == 0 then
+            animatedVolume = volume
+        else
+            local difference = volume - animatedVolume
+            animatedVolume = math.abs(difference) < 0.04 and volume or (animatedVolume + difference * 0.38)
+        end
+        setVariable('VolumeFill', math.floor((animatedVolume / 30) * 260 + 0.5))
+        setVariable('MiniVolumeFill', math.floor((animatedVolume / 30) * 154 + 0.5))
+        setVariable('DetailVolumeFill', math.floor((animatedVolume / 30) * settingNumber('VolumeRailWidth', 237, 100, 445) + 0.5))
+        setVariable('StudioVolumeFill', math.floor((animatedVolume / 30) * settingNumber('StudioVolumeRailWidth', 187, 80, 355) + 0.5))
+        setVariable('SignalVolumeFill', math.floor((animatedVolume / 30) * settingNumber('SignalVolumeRailWidth', 220, 80, 400) + 0.5))
+    end
+
     updatePositionClamp()
     return number(state.battery, 0)
 end
@@ -1159,6 +1288,10 @@ function SetDetails(value)
 end
 
 function RefreshLayout()
+    lastApplySignature = ''
+    lastHealthSignature = ''
+    animSettled = false
+    variableCache = {}
     updateView(true)
     updateVisibility(true)
     applyState()
