@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.9.6
+
+### Added
+- **Sound Connect conflict guidance** on the status line, with click-to-reconnect
+- **Headphone bridge controls** in Customize → Behavior (auto/pin/device pick, Classic/BLE, sync interval, apply & reconnect)
+- **Click-to-seek** on volume rails (Line, Studio, Mono)
+- **Smarter desktop alerts** using the real device name, plus optional charging and connect/disconnect toasts
+
+### Improved
+- Bridge publishes a short paired-device list for the settings picker (bridge 0.3.35)
+
 ## 2.9.5
 
 ### Added

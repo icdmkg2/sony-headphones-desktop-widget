@@ -1,4 +1,6 @@
 local settingsPath
+local bridgeSettingsPath
+local dataPath
 local currentPage = 'appearance'
 
 local defaults = {
@@ -14,6 +16,8 @@ local defaults = {
     EnableAnimations = 1,
     BatteryAlerts = 1,
     BatteryAlertLevel = 20,
+    ChargeAlerts = 1,
+    ConnectionAlerts = 1,
     WidgetDesign = 'line',
     ExpandedContentWidth = 392,
     ExpandedSidePadding = 22,
@@ -46,6 +50,11 @@ local accentColors = {
 local accentOverride = nil
 local settingsUiCache = {}
 local settingsVariableCache = {}
+local bridgeDraft = {
+    deviceMac = 'auto',
+    connectionMode = 'classic',
+    refreshSeconds = 0
+}
 
 local function number(value, fallback)
     local result = tonumber(value)
@@ -104,18 +113,132 @@ local function setAccentState(prefix, color, active)
     setVariable(prefix .. 'Text', active and '17,31,23,255' or color)
 end
 
+local function readIniSection(path, sectionName)
+    local values = {}
+    local file = io.open(path, 'r')
+    if not file then return values end
+    local inSection = false
+    local wanted = tostring(sectionName or ''):lower()
+    for line in file:lines() do
+        line = line:gsub('\r$', '')
+        local section = line:match('^%s*%[%s*([^%]]+)%s*%]')
+        if section then
+            inSection = section:lower() == wanted
+        elseif inSection and not line:match('^%s*[;#]') then
+            local key, value = line:match('^%s*([^=]+)%s*=%s*(.-)%s*$')
+            if key then values[key:lower():gsub('%s+$', '')] = value end
+        end
+    end
+    file:close()
+    return values
+end
+
+local function loadBridgeSettings()
+    local values = readIniSection(bridgeSettingsPath, 'Bridge')
+    local mac = tostring(values.devicemac or 'auto')
+    if mac == '' then mac = 'auto' end
+    local mode = tostring(values.connectionmode or 'classic'):lower()
+    if mode ~= 'ble' then mode = 'classic' end
+    local refresh = number(values.refreshseconds, 0)
+    if refresh < 300 then refresh = 0 end
+    if refresh > 3600 then refresh = 3600 end
+    bridgeDraft.deviceMac = mac
+    bridgeDraft.connectionMode = mode
+    bridgeDraft.refreshSeconds = refresh
+end
+
+local function writeBridgeSettings()
+    local lines = {
+        '[Bridge]',
+        '; Keep auto unless more than one compatible Sony headset is connected.',
+        '; To pin the widget, use DeviceMac=AA:BB:CC:DD:EE:FF',
+        'DeviceMac=' .. tostring(bridgeDraft.deviceMac or 'auto'),
+        '',
+        '; Classic is the reliable control channel for the WH-1000XM5.',
+        '; Use ble only if you deliberately want to test the BLE backend.',
+        '; Valid values: classic, ble (legacy auto is treated as classic)',
+        'ConnectionMode=' .. tostring(bridgeDraft.connectionMode or 'classic'),
+        '',
+        '; 0 disables automatic full-state syncs, which is the stable default.',
+        '; Use 300-3600 only if you explicitly want periodic full refreshes.',
+        'RefreshSeconds=' .. tostring(math.floor(number(bridgeDraft.refreshSeconds, 0)))
+    }
+    local file = io.open(bridgeSettingsPath, 'w')
+    if not file then return false end
+    file:write(table.concat(lines, '\n'), '\n')
+    file:close()
+    return true
+end
+
+local function shortMac(mac)
+    mac = tostring(mac or ''):upper()
+    if mac == '' or mac:lower() == 'auto' then return 'AUTO' end
+    return mac
+end
+
+local function refreshLabel(seconds)
+    seconds = number(seconds, 0)
+    if seconds <= 0 then return 'OFF' end
+    if seconds <= 300 then return '5 MIN' end
+    if seconds <= 900 then return '15 MIN' end
+    return '30 MIN'
+end
+
+local function updateBridgeDevicePicks()
+    local devices = readIniSection(dataPath .. '\\devices.ini', 'Devices')
+    local count = math.min(3, math.max(0, math.floor(number(devices.count, 0))))
+    setVariable('BridgeDeviceCount', count)
+    for index = 0, 2 do
+        local name = devices['device_' .. index .. '_name'] or ''
+        local mac = devices['device_' .. index .. '_mac'] or ''
+        local visible = currentPage == 'behavior' and index < count and name ~= '' and mac ~= ''
+        setVariable('BridgePick' .. index .. 'Label', visible and name or '')
+        local selected = visible and tostring(bridgeDraft.deviceMac or ''):lower() == mac:lower()
+        setButtonState('BridgePick' .. index, selected)
+        -- ShowMeterGroup ignores Hidden=, so manage these meters directly.
+        SKIN:Bang(visible and '!ShowMeter' or '!HideMeter', 'MeterBridgePick' .. index)
+    end
+end
+
+local function updateBridgeUi()
+    local auto = tostring(bridgeDraft.deviceMac or 'auto'):lower() == 'auto'
+    setButtonState('BridgeAuto', auto)
+    setButtonState('BridgeClassic', bridgeDraft.connectionMode == 'classic')
+    setButtonState('BridgeBle', bridgeDraft.connectionMode == 'ble')
+    local refresh = number(bridgeDraft.refreshSeconds, 0)
+    setButtonState('BridgeSyncOff', refresh <= 0)
+    setButtonState('BridgeSync5', refresh > 0 and refresh <= 300)
+    setButtonState('BridgeSync15', refresh > 300 and refresh <= 900)
+    setButtonState('BridgeSync30', refresh > 900)
+    setVariable('BridgeDeviceLabel', auto and 'AUTO SELECT' or ('PINNED  ' .. shortMac(bridgeDraft.deviceMac)))
+    setVariable('BridgeModeLabel', bridgeDraft.connectionMode == 'ble' and 'BLE' or 'CLASSIC')
+    setVariable('BridgeSyncLabel', refreshLabel(refresh))
+
+    local state = readIniSection(dataPath .. '\\state.ini', 'State')
+    local currentName = state.device_name
+    if not currentName or currentName == '' then currentName = 'No device yet' end
+    local currentMac = state.device_mac or ''
+    setVariable('BridgeCurrentDevice', currentName)
+    setVariable('BridgeCurrentMac', currentMac ~= '' and shortMac(currentMac) or '--')
+    updateBridgeDevicePicks()
+end
+
 local function applyPage()
     for _, page in ipairs(pages) do
         local group = 'Page' .. page:sub(1, 1):upper() .. page:sub(2)
         SKIN:Bang(page == currentPage and '!ShowMeterGroup' or '!HideMeterGroup', group)
         setButtonState('Nav' .. page:sub(1, 1):upper() .. page:sub(2), page == currentPage)
     end
+    updateBridgeDevicePicks()
     SKIN:Bang('!UpdateMeter', '*')
     SKIN:Bang('!Redraw')
 end
 
 function Initialize()
     settingsPath = SELF:GetOption('SettingsPath')
+    bridgeSettingsPath = SELF:GetOption('BridgeSettingsPath')
+    dataPath = SELF:GetOption('DataPath')
+    loadBridgeSettings()
     applyPage()
 end
 
@@ -131,12 +254,16 @@ function Update()
         tostring(number(SKIN:GetVariable('ShowButtonIcons'), 1)),
         tostring(number(SKIN:GetVariable('EnableAnimations'), 1)),
         tostring(number(SKIN:GetVariable('BatteryAlerts'), 1)),
+        tostring(number(SKIN:GetVariable('ChargeAlerts'), 1)),
+        tostring(number(SKIN:GetVariable('ConnectionAlerts'), 1)),
         tostring(number(SKIN:GetVariable('ShowConnectionHealth'), 1)),
         tostring(number(SKIN:GetVariable('ShowAmbientRow'), 1)),
         tostring(number(SKIN:GetVariable('ShowTrackArtist'), 1)),
-        tostring(number(SKIN:GetVariable('ShowQuickControls'), 1))
+        tostring(number(SKIN:GetVariable('ShowQuickControls'), 1)),
+        tostring(bridgeDraft.deviceMac), tostring(bridgeDraft.connectionMode), tostring(bridgeDraft.refreshSeconds),
+        tostring(currentPage)
     }, '|')
-    if settingsUiCache.signature == uiSignature then return 0 end
+    if settingsUiCache.signature == uiSignature and currentPage ~= 'behavior' then return 0 end
     settingsUiCache.signature = uiSignature
 
     setVariable('Accent', accent)
@@ -148,6 +275,8 @@ function Update()
         ButtonIcon = {'ShowButtonIcons', 1},
         Animation = {'EnableAnimations', 1},
         BatteryAlert = {'BatteryAlerts', 1},
+        ChargeAlert = {'ChargeAlerts', 1},
+        ConnectionAlert = {'ConnectionAlerts', 1},
         Health = {'ShowConnectionHealth', 1},
         Ambient = {'ShowAmbientRow', 1},
         Artist = {'ShowTrackArtist', 1},
@@ -172,6 +301,7 @@ function Update()
     setAccentState('AccentViolet', accentColors.violet, accent == accentColors.violet)
     setAccentState('AccentAmber', accentColors.amber, accent == accentColors.amber)
     setAccentState('AccentRose', accentColors.rose, accent == accentColors.rose)
+    updateBridgeUi()
     return 0
 end
 
@@ -180,6 +310,8 @@ function Page(name)
     for _, page in ipairs(pages) do
         if name == page then
             currentPage = name
+            settingsUiCache.signature = nil
+            if name == 'behavior' then loadBridgeSettings() end
             applyPage()
             return
         end
@@ -206,7 +338,6 @@ function Theme(name)
         white = {'245,245,245,255', '155,155,155,255', '92,92,92,180', '92,92,92,115', '34,34,38,225', '72,72,72,210'},
         warm = {'255,244,226,255', '187,169,146,255', '115,101,84,180', '115,101,84,105', '43,38,32,225', '96,84,72,210'},
         blue = {'225,238,255,255', '151,174,203,255', '79,103,132,180', '79,103,132,105', '29,36,47,225', '72,86,104,210'},
-        -- Dark ink for light / white wallpapers
         dark = {'28,28,32,255', '102,102,110,255', '70,70,76,170', '70,70,76,100', '238,238,242,235', '168,168,174,210'}
     }
     local colors = themes[name] or themes.white
@@ -255,6 +386,80 @@ end
 
 function EditFile()
     SKIN:Bang('"notepad.exe" "' .. settingsPath .. '"')
+end
+
+function EditBridgeFile()
+    SKIN:Bang('"notepad.exe" "' .. bridgeSettingsPath .. '"')
+end
+
+function BridgeSetAuto()
+    bridgeDraft.deviceMac = 'auto'
+    settingsUiCache.signature = nil
+    updateBridgeUi()
+    SKIN:Bang('!UpdateMeter', '*')
+    SKIN:Bang('!Redraw')
+end
+
+function BridgePinCurrent()
+    local state = readIniSection(dataPath .. '\\state.ini', 'State')
+    local mac = tostring(state.device_mac or '')
+    if mac == '' then return end
+    bridgeDraft.deviceMac = mac
+    settingsUiCache.signature = nil
+    updateBridgeUi()
+    SKIN:Bang('!UpdateMeter', '*')
+    SKIN:Bang('!Redraw')
+end
+
+function BridgePickDevice(index)
+    index = math.floor(number(index, 0))
+    local devices = readIniSection(dataPath .. '\\devices.ini', 'Devices')
+    local mac = devices['device_' .. index .. '_mac']
+    if not mac or mac == '' then return end
+    bridgeDraft.deviceMac = mac
+    settingsUiCache.signature = nil
+    updateBridgeUi()
+    SKIN:Bang('!UpdateMeter', '*')
+    SKIN:Bang('!Redraw')
+end
+
+function BridgeSetMode(mode)
+    mode = tostring(mode or 'classic'):lower()
+    if mode ~= 'ble' then mode = 'classic' end
+    bridgeDraft.connectionMode = mode
+    settingsUiCache.signature = nil
+    updateBridgeUi()
+    SKIN:Bang('!UpdateMeter', '*')
+    SKIN:Bang('!Redraw')
+end
+
+function BridgeSetRefresh(seconds)
+    seconds = math.floor(number(seconds, 0))
+    if seconds > 0 and seconds < 300 then seconds = 300 end
+    if seconds > 3600 then seconds = 3600 end
+    bridgeDraft.refreshSeconds = seconds
+    settingsUiCache.signature = nil
+    updateBridgeUi()
+    SKIN:Bang('!UpdateMeter', '*')
+    SKIN:Bang('!Redraw')
+end
+
+function BridgeApply()
+    if not writeBridgeSettings() then return end
+    settingsUiCache.signature = nil
+    setVariable('BridgeApplyLabel', 'RECONNECTING...')
+    SKIN:Bang('!UpdateMeter', 'MeterBridgeApply')
+    SKIN:Bang('!Redraw')
+    SKIN:Bang('!CommandMeasure', 'MeasureScript', 'Reconnect()', 'SonyXM5')
+    setVariable('BridgeApplyLabel', 'APPLY & RECONNECT')
+end
+
+function BridgeRefreshDevices()
+    SKIN:Bang('!CommandMeasure', 'MeasureScript', "Command('list-devices')", 'SonyXM5')
+    settingsUiCache.signature = nil
+    updateBridgeUi()
+    SKIN:Bang('!UpdateMeter', '*')
+    SKIN:Bang('!Redraw')
 end
 
 function OpenDebug()

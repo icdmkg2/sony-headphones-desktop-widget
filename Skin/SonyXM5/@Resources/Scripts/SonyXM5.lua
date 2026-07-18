@@ -42,6 +42,9 @@ local lastApplySignature = ''
 local lastHealthSignature = ''
 local healthTick = 0
 local animSettled = false
+local lastChargingState = nil
+local lastConnectedState = nil
+local connectionAlertReady = false
 
 local COLOR = {
     primary = '245,245,245,255',
@@ -439,6 +442,13 @@ local function applyToggle(variablePrefix, key, supportedKey)
     setVariable(variablePrefix .. 'Text', text)
 end
 
+local function isControllerBusyError(text)
+    text = tostring(text or ''):lower()
+    return text:find('sound connect', 1, true) ~= nil
+        or text:find('another app', 1, true) ~= nil
+        or text:find('only one usage', 1, true) ~= nil
+end
+
 local function applyState()
     local status = state.status or 'setup'
     local connected = status == 'connected' or status == 'syncing' or status == 'recovering'
@@ -457,11 +467,22 @@ local function applyState()
     if status == 'disconnected' then statusColor = mono.error end
     if status == 'setup' or status == 'stopped' then statusColor = mono.disabled end
 
+    local statusText = state.status_text or 'Starting bridge'
+    local errorText = state.error or ''
+    if status == 'disconnected' and isControllerBusyError(errorText) then
+        statusText = 'Close Sound Connect - click to reconnect'
+        statusColor = mono.error
+    elseif status == 'disconnected' and statusText == 'Headphone controls unavailable' then
+        statusText = 'Headphone controls unavailable - click to reconnect'
+    end
+
     setVariable('DeviceName', state.device_name ~= '' and state.device_name or 'WH-1000XM5')
-    setVariable('StatusText', state.status_text or 'Starting bridge')
+    setVariable('DeviceMac', state.device_mac or '')
+    setVariable('StatusText', statusText)
     setVariable('StatusColor', statusColor)
-    setVariable('StatusDetail', state.error or '')
-    setVariable('ErrorText', state.error or '')
+    setVariable('StatusDetail', errorText)
+    setVariable('ErrorText', errorText)
+    setVariable('StatusActionHint', (status == 'disconnected' or status == 'stopped' or status == 'setup') and 1 or 0)
     setVariable('Battery', battery)
     local batteryThreshold = settingNumber('BatteryAlertLevel', 20, 5, 50)
     local batteryLow = connected and not isOn('charging') and battery <= batteryThreshold
@@ -615,11 +636,23 @@ local function applyState()
         .. ' | Last disconnect: ' .. lastDisconnect)
 end
 
-local function triggerBatteryAlert(battery)
-    local value = math.max(0, math.min(100, math.floor(number(battery, 20) + 0.5)))
+local function deviceLabel()
+    local name = tostring(state.device_name or '')
+    if name == '' then name = 'Headphones' end
+    return name
+end
+
+local function triggerAlert(kind, battery)
+    local value = math.max(0, math.min(100, math.floor(number(battery, number(state.battery, 20)) + 0.5)))
     setVariable('BatteryAlertValue', value)
+    setVariable('AlertDeviceName', deviceLabel())
+    setVariable('AlertKind', tostring(kind or 'battery'))
     SKIN:Bang('!UpdateMeasure', 'MeasureBatteryAlert')
     SKIN:Bang('!CommandMeasure', 'MeasureBatteryAlert', 'Run')
+end
+
+local function triggerBatteryAlert(battery)
+    triggerAlert('battery', battery)
 end
 
 local function updateBatteryAlert()
@@ -628,10 +661,33 @@ local function updateBatteryAlert()
     local connected = state.status == 'connected'
     local charging = isOn('charging')
     if charging or battery > threshold + 5 then batteryAlertArmed = true end
-    if settingFlag('BatteryAlerts', true) == 0 then return end
-    if connected and not charging and battery <= threshold and batteryAlertArmed then
+    if settingFlag('BatteryAlerts', true) == 1
+        and connected and not charging and battery <= threshold and batteryAlertArmed then
         batteryAlertArmed = false
-        triggerBatteryAlert(battery)
+        triggerAlert('battery', battery)
+    end
+
+    if lastChargingState == nil then
+        lastChargingState = charging
+    elseif charging ~= lastChargingState then
+        if charging and settingFlag('ChargeAlerts', true) == 1 and connected then
+            triggerAlert('charge', battery)
+        end
+        lastChargingState = charging
+    end
+
+    if lastConnectedState == nil then
+        lastConnectedState = connected
+        connectionAlertReady = true
+    elseif connected ~= lastConnectedState then
+        if connectionAlertReady and settingFlag('ConnectionAlerts', true) == 1 then
+            if connected then
+                triggerAlert('reconnect', battery)
+            elseif state.status == 'disconnected' then
+                triggerAlert('disconnect', battery)
+            end
+        end
+        lastConnectedState = connected
     end
 end
 
@@ -699,7 +755,7 @@ end
 local function stateApplySignature()
     return table.concat({
         state.status or '', state.status_text or '', state.error or '',
-        state.device_name or '', state.battery or '', state.charging or '',
+        state.device_name or '', state.device_mac or '', state.battery or '', state.charging or '',
         state.volume or '', state.playback or '', state.track_title or '', state.track_artist or '',
         state.anc_mode or '', state.ambient_level or '', state.focus_voice or '',
         state.speak_to_chat or '', state.dsee or '', state.auto_pause or '',
@@ -1106,6 +1162,31 @@ function AdjustVolume(delta)
     Command('volume-step ' .. tostring(delta))
 end
 
+function SeekVolume(ratio)
+    ratio = number(ratio, -1)
+    if ratio < 0 then return end
+    local level = math.floor(math.max(0, math.min(30, ratio * 30 + 0.5)))
+    optimisticVolume = level
+    optimisticVolumeTicks = 30
+    state.volume = tostring(level)
+    lastApplySignature = ''
+    applyState()
+    SKIN:Bang('!UpdateMeter', 'MeterVolumeFill')
+    SKIN:Bang('!UpdateMeter', 'MeterStudioVolumeFill')
+    SKIN:Bang('!UpdateMeter', 'MeterSignalVolumeFill')
+    SKIN:Bang('!UpdateMeter', 'MeterVolumeValue')
+    SKIN:Bang('!Redraw')
+    Command('volume ' .. tostring(level))
+end
+
+function StatusAction()
+    local status = state.status or ''
+    if status == 'disconnected' or status == 'stopped' or status == 'setup'
+        or isControllerBusyError(state.error) then
+        Reconnect()
+    end
+end
+
 function MediaAction(action)
     action = tostring(action):lower()
     if action == 'playpause' then
@@ -1234,7 +1315,7 @@ function RefreshBridge()
 end
 
 function TestBatteryAlert()
-    triggerBatteryAlert(settingNumber('BatteryAlertLevel', 20, 5, 50))
+    triggerAlert('test', settingNumber('BatteryAlertLevel', 20, 5, 50))
 end
 
 function Reconnect()

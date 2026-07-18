@@ -2,15 +2,44 @@ param(
     [ValidateRange(0, 100)]
     [int]$Battery = 20,
 
+    [string]$DeviceName = 'Headphones',
+
+    [ValidateSet('battery', 'charge', 'reconnect', 'disconnect', 'test')]
+    [string]$Kind = 'battery',
+
     [switch]$Test
 )
 
 $ErrorActionPreference = 'Stop'
-$title = if ($Test) { 'Battery alert test' } else { 'WH-1000XM5 battery low' }
-$message = if ($Test) {
-    "Notifications are working. The current alert threshold is $Battery%."
-} else {
-    "Headphone battery is at $Battery%. Connect a charger soon."
+if ([string]::IsNullOrWhiteSpace($DeviceName)) { $DeviceName = 'Headphones' }
+if ($Test) { $Kind = 'test' }
+
+switch ($Kind) {
+    'test' {
+        $title = 'Alert test'
+        $message = "Notifications are working for $DeviceName. Low-battery threshold is $Battery%."
+        $accentRgb = @(91, 225, 145)
+    }
+    'charge' {
+        $title = "$DeviceName charging"
+        $message = "Charging started. Battery is at $Battery%."
+        $accentRgb = @(91, 225, 145)
+    }
+    'reconnect' {
+        $title = "$DeviceName connected"
+        $message = "Headphone controls are online again."
+        $accentRgb = @(84, 200, 255)
+    }
+    'disconnect' {
+        $title = "$DeviceName disconnected"
+        $message = "Headphone controls are offline."
+        $accentRgb = @(255, 115, 115)
+    }
+    default {
+        $title = "$DeviceName battery low"
+        $message = "Battery is at $Battery%. Connect a charger soon."
+        $accentRgb = @(255, 115, 115)
+    }
 }
 
 try {
@@ -53,7 +82,7 @@ try {
     $accent.Width = 4
     $accent.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
     $accent.CornerRadius = [System.Windows.CornerRadius]::new(14, 0, 0, 14)
-    $accent.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(255, 115, 115))
+    $accent.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb($accentRgb[0], $accentRgb[1], $accentRgb[2]))
     $null = $grid.Children.Add($accent)
 
     $content = New-Object System.Windows.Controls.StackPanel

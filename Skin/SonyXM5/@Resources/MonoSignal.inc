@@ -103,12 +103,14 @@ W=#SignalDeviceWidth#
 H=14
 FontFace=#Font#
 FontSize=#CurrentSecondarySize#
-FontColor=#UserMutedColor#
+FontColor=#StatusColor#
 AntiAlias=1
 StringAlign=LeftCenter
 ClipString=1
 Text=#StatusText#
 DynamicVariables=1
+MouseActionCursor=1
+LeftMouseUpAction=[!CommandMeasure MeasureScript "StatusAction()"]
 
 ; Compact actions ----------------------------------------------------------
 
@@ -735,7 +737,10 @@ Hidden=1
 X=(#CurrentSidePadding#+82)
 Y=#VolumeCenterY#
 Shape=Line 0,0,#SignalVolumeRailWidth#,0 | Stroke Color #UserDividerColor# | StrokeWidth 2
+Shape2=Rectangle 0,-12,#SignalVolumeRailWidth#,24 | Fill Color 0,0,0,1 | StrokeWidth 0
 DynamicVariables=1
+MouseActionCursor=1
+LeftMouseUpAction=[!CommandMeasure MeasureScript "SeekVolume($MouseX$ / #SignalVolumeRailWidth#)"]
 MouseScrollUpAction=[!CommandMeasure MeasureScript "AdjustVolume(1)"]
 MouseScrollDownAction=[!CommandMeasure MeasureScript "AdjustVolume(-1)"]
 
@@ -747,7 +752,10 @@ Hidden=1
 X=(#CurrentSidePadding#+82)
 Y=#VolumeCenterY#
 Shape=Line 0,0,#SignalVolumeFill#,0 | Stroke Color #UserTextColor# | StrokeWidth 3
+Shape2=Rectangle 0,-12,#SignalVolumeRailWidth#,24 | Fill Color 0,0,0,1 | StrokeWidth 0
 DynamicVariables=1
+MouseActionCursor=1
+LeftMouseUpAction=[!CommandMeasure MeasureScript "SeekVolume($MouseX$ / #SignalVolumeRailWidth#)"]
 MouseScrollUpAction=[!CommandMeasure MeasureScript "AdjustVolume(1)"]
 MouseScrollDownAction=[!CommandMeasure MeasureScript "AdjustVolume(-1)"]
 

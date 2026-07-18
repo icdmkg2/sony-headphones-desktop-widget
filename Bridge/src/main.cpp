@@ -35,7 +35,7 @@ using namespace std::chrono_literals;
 
 namespace
 {
-constexpr char kBridgeVersion[] = "0.3.34";
+constexpr char kBridgeVersion[] = "0.3.35";
 
 enum class Transport
 {
@@ -514,6 +514,8 @@ private:
             return;
         }
 
+        WriteDevicesList(connection_);
+
         std::string selectedMac;
         selectedDeviceName_ = "WH-1000XM5";
         if (recovering_ && !selectedMac_.empty())
@@ -583,6 +585,41 @@ private:
         logger_.Write(std::string("Connecting via ") + TransportName(transport_) + " to " + selectedDeviceName_ + " at " + selectedMac_);
     }
 
+    void WriteDevicesList(MDRConnection* connection)
+    {
+        const fs::path destination = dataDirectory_ / "devices.ini";
+        const fs::path temporary = dataDirectory_ / "devices.ini.tmp";
+        MDRDeviceInfo* devices = nullptr;
+        int count = 0;
+        std::ostringstream stream;
+        stream << "[Devices]\n";
+        if (connection && mdrConnectionGetDevicesList(connection, &devices, &count) == MDR_RESULT_OK && count > 0)
+        {
+            const int published = std::min(count, 6);
+            stream << "count=" << published << '\n';
+            for (int index = 0; index < published; ++index)
+            {
+                stream << "device_" << index << "_name=" << SafeIni(devices[index].szDeviceName) << '\n';
+                stream << "device_" << index << "_mac=" << SafeIni(devices[index].szDeviceMacAddress) << '\n';
+            }
+        }
+        else
+        {
+            stream << "count=0\n";
+        }
+        if (devices && connection)
+            mdrConnectionFreeDevicesList(connection, &devices);
+
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        if (!file)
+            return;
+        const std::string payload = stream.str();
+        file.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+        file.close();
+        MoveFileExW(temporary.c_str(), destination.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    }
+
     void FailConnection(std::string message)
     {
         message = SafeIni(Trim(std::move(message)));
@@ -590,8 +627,11 @@ private:
             message = "Unknown Bluetooth control error";
 
         const auto lower = Lower(message);
-        if (transport_ == Transport::Classic && lower.find("only one usage") != std::string::npos)
-            message = "Another app is using the Classic Sony control link";
+        const bool controllerBusy = transport_ == Transport::Classic
+            && (lower.find("only one usage") != std::string::npos
+                || lower.find("another app is using") != std::string::npos);
+        if (controllerBusy)
+            message = "Sony Sound Connect or another app is using the headphones";
 
         const std::string labelledError = std::string(TransportName(transport_)) + ": " + message;
         lastDisconnectReason_ = labelledError;
@@ -604,7 +644,12 @@ private:
         recovering_ = hasConnected_ && recoveryStarted_ && now - *recoveryStarted_ < 30s;
         error_ = recovering_ ? "" : labelledError;
         status_ = recovering_ ? "recovering" : "disconnected";
-        statusText_ = recovering_ ? "Reconnecting headphone controls" : "Headphone controls unavailable";
+        if (recovering_)
+            statusText_ = "Reconnecting headphone controls";
+        else if (controllerBusy)
+            statusText_ = "Close Sound Connect - click to reconnect";
+        else
+            statusText_ = "Headphone controls unavailable - click to reconnect";
         transport_ = settings_.connectionMode == "ble" ? Transport::Ble : Transport::Classic;
         nextConnectAttempt_ = now + (recovering_ ? 500ms : 8s);
     }
@@ -671,12 +716,38 @@ private:
             Disconnect();
             nextConnectAttempt_ = Clock::now();
             status_ = "searching";
-            statusText_ = "Looking for WH-1000XM5";
+            statusText_ = "Looking for headphones";
             return;
         }
         if (command == "refresh")
         {
             syncRequested_ = true;
+            return;
+        }
+        if (command == "list-devices")
+        {
+            if (connection_)
+                WriteDevicesList(connection_);
+            else
+            {
+                // Avoid opening a second Classic control session while another
+                // app may already own it; fall back to a short-lived enumerator.
+                settings_ = ReadSettings(dataDirectory_ / "settings.ini");
+                if (settings_.connectionMode == "ble")
+                {
+                    auto* ble = mdrConnectionWindowsBLECreate();
+                    WriteDevicesList(ble ? mdrConnectionWindowsBLEGet(ble) : nullptr);
+                    if (ble)
+                        mdrConnectionWindowsBLEDestroy(ble);
+                }
+                else
+                {
+                    auto* classic = mdrConnectionWindowsCreate();
+                    WriteDevicesList(classic ? mdrConnectionWindowsGet(classic) : nullptr);
+                    if (classic)
+                        mdrConnectionWindowsDestroy(classic);
+                }
+            }
             return;
         }
 

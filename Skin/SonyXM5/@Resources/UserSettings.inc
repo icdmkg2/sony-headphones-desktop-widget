@@ -14,6 +14,8 @@ WelcomeCompleted=0
 EnableAnimations=1
 BatteryAlerts=1
 BatteryAlertLevel=20
+ChargeAlerts=1
+ConnectionAlerts=1
 
 ; Expanded view
 ExpandedContentWidth=392
