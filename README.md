@@ -17,7 +17,7 @@ The latest stable release is **v2.9.6**.
 - Noise cancelling, ambient sound, focus on voice, and ambient-level controls
 - Speak-to-Chat, DSEE, wear detection, touch controls, and multipoint toggles
 - EQ presets, Clear Bass, five-band EQ, connection priority, and automatic power-off settings
-- Compact and expanded layouts with customizable sizing, typography, dark text for light wallpapers, five live accent colors, and optional rows
+- Compact and expanded layouts with customizable sizing, typography, dark text for light wallpapers, accent presets plus a custom color picker, and optional rows
 - Lock-safe updates: installers carry a bridge payload while the running helper uses a separate runtime copy
 - Three transparent designs: Line, Studio, and Mono Signal
 - Low-battery desktop alerts, automatic recovery, reconnect controls, and diagnostic information

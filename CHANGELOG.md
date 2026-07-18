@@ -7,9 +7,11 @@
 - **Headphone bridge controls** in Customize → Behavior (auto/pin/device pick, Classic/BLE, sync interval, apply & reconnect)
 - **Click-to-seek** on volume rails (Line, Studio, Mono)
 - **Smarter desktop alerts** using the real device name, plus optional charging and connect/disconnect toasts
+- **Custom accent color picker** in Customize → Appearance (Windows color dialog, keeps the preset swatches)
 
 ### Improved
 - Bridge publishes a short paired-device list for the settings picker (bridge 0.3.35)
+- Behavior settings layout and ASCII-safe separators
 
 ## 2.9.5
 

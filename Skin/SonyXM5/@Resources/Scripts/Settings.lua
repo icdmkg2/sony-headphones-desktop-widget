@@ -268,6 +268,12 @@ function Update()
 
     setVariable('Accent', accent)
     setVariable('AccentSoft', colorWithAlpha(accent, 28))
+    local red, green, blue = accent:match('(%d+)%s*,%s*(%d+)%s*,%s*(%d+)')
+    if red then
+        setVariable('AccentRgbLabel', 'RGB ' .. red .. ' ' .. green .. ' ' .. blue)
+    else
+        setVariable('AccentRgbLabel', 'CUSTOM')
+    end
 
     local toggles = {
         Status = {'ShowStatusText', 1},
@@ -351,18 +357,49 @@ function Theme(name)
     redrawWidget()
 end
 
-function Accent(name)
-    name = tostring(name):lower()
-    local color = accentColors[name] or accentColors.mint
+local function applyAccentColor(color)
+    color = tostring(color or '')
     accentOverride = color
     settingsUiCache.signature = nil
     writeValue('UserSuccessColor', color)
     setVariable('Accent', color)
     setVariable('AccentSoft', colorWithAlpha(color, 28))
+    local red, green, blue = color:match('(%d+)%s*,%s*(%d+)%s*,%s*(%d+)')
+    if red then
+        setVariable('AccentRgbLabel', 'RGB ' .. red .. ' ' .. green .. ' ' .. blue)
+    else
+        setVariable('AccentRgbLabel', 'CUSTOM')
+    end
     Update()
     applyPage()
     redrawWidget()
     accentOverride = nil
+end
+
+function Accent(name)
+    name = tostring(name):lower()
+    applyAccentColor(accentColors[name] or accentColors.mint)
+end
+
+function PickAccent()
+    SKIN:Bang('!UpdateMeasure', 'MeasureAccentPicker')
+    SKIN:Bang('!CommandMeasure', 'MeasureAccentPicker', 'Run')
+end
+
+function ApplyCustomAccent(raw)
+    raw = tostring(raw or ''):gsub('[\r\n]', ''):gsub('^%s+', ''):gsub('%s+$', '')
+    if raw == '' or raw == '0' or raw == '-1' then return end
+    local red, green, blue, alpha = raw:match('^(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)$')
+    if not red then
+        red, green, blue = raw:match('^(%d+)%s*,%s*(%d+)%s*,%s*(%d+)$')
+        alpha = '255'
+    end
+    if not red then return end
+    red = math.max(0, math.min(255, math.floor(number(red, 0))))
+    green = math.max(0, math.min(255, math.floor(number(green, 0))))
+    blue = math.max(0, math.min(255, math.floor(number(blue, 0))))
+    alpha = math.max(0, math.min(255, math.floor(number(alpha, 255))))
+    applyAccentColor(table.concat({red, green, blue, alpha}, ','))
 end
 
 function Design(name)
